@@ -10,4 +10,4 @@ For this way, all the paper PMID are saved line by line in "inputs.txt".
 For this way, the package automatically search for the given keyword and output the info for the first 20 (default) papers.
 The number of 20 can be modified in function "search_term()" as a parameter input of "Entrez.esearch()".
 
-The output are saved in "outputs.csv" file.
+The outputs are saved in "outputs.csv" file.
