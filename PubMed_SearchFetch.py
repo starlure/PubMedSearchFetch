@@ -11,16 +11,25 @@ import csv
 import re
 import sys
 import argparse
+from Get_Hindex import Get_Hindex
+from Get_Affi import Get_Affi
+from ArticleRetrieval_Elsevier import Get_Abstract
+import requests
+
 
 class Article():
     
-    def __init__(self, record):
-        self.TI = record.get('TI',None)
-        self.FAU = record.get('FAU',None)
-        self.AB = record.get('AB',None)
-        self.JT = record.get('JT',None)
-        self.DP = record.get('DP',None)
-        self.AD = record.get('AD',None)
+    def __init__(self, record, MY_API_KEY, authtoken):
+        self.PMID = record.get('PMID',None)
+        self.TI = record.get('TI',None) # Title
+        self.FAU = record.get('FAU',None) # Full Author Name
+        self.AB = record.get('AB',None) # Abstract
+        self.JT = record.get('JT',None) # Journal Name
+        self.DP = record.get('DP',None) # Publication Date
+        self.AD = record.get('AD',None) # Affiliations
+        self.GR = record.get('GR',None) # Grant
+        self.MY_API_KEY = MY_API_KEY
+        self.authtoken = authtoken
         
     def get_LastAuthorEmail(self):
         match = re.findall(r'[\w\.-]+@[\w\.-]+\.\w+',self.AD)
@@ -29,28 +38,58 @@ class Article():
         else:
             return match[-1]
     
-    def get_FirstLastAffi(self, LastAuthorEmail):
-        FirstAuthorAffi = self.AD.partition('.')[0]
-        if LastAuthorEmail == '':
-            LastAuthorAffi = self.AD.split('.')[-2]
+    def get_FirstLastAuthor(self):
+        if self.FAU == None:
+            (FirstAuthor, LastAuthor, FirstAuthorAffi, LastAuthorAffi) = [None] * 4
         else:
-            tmp = self.AD.replace(LastAuthorEmail,'')
-            tmp_split = tmp.split('.')
-            if len(tmp_split) >= 3:
-                LastAuthorAffi = tmp_split[-3]
-            else:
-                LastAuthorAffi = tmp_split[-2]
+            FirstAuthor, LastAuthor = self.FAU[0], self.FAU[-1]
+            last_name, first_name = [x.strip() for x in FirstAuthor.split(',')]
+            FirstAuthorAffi = Get_Affi(first_name, last_name, self.MY_API_KEY, self.authtoken)
+            last_name, first_name = [x.strip() for x in LastAuthor.split(',')]
+            LastAuthorAffi = Get_Affi(first_name, last_name, self.MY_API_KEY, self.authtoken)
+        
+        return (FirstAuthor, LastAuthor, FirstAuthorAffi, LastAuthorAffi)
+    
+    def get_LastAuthor_Hindex(self):
+        if self.FAU == None:
+            return None
+        else:
+            last_name, first_name = [x.strip() for x in self.FAU[-1].split(',')]
+            Hindex = Get_Hindex(first_name, last_name, self.MY_API_KEY, self.authtoken)
+            return Hindex
+    
+    def get_FirstLastAffi(self):
+        author_len = len(self.FAU)
+        if author_len == 0:
+            FirstAuthorAffi, LastAuthorAffi = None, None
+        elif author_len == 1:
+            FirstAuthorAffi, LastAuthorAffi = self.AD, self.AD
+        else:
+            FirstAuthorAffi, LastAuthorAffi = self.AD.partition('.')[0], self.AD.partition('.')[-1]
+            
+#        FirstAuthorAffi = self.AD.partition('.')[0]
+#        if LastAuthorEmail == '':
+#            LastAuthorAffi = self.AD.split('.')[-2]
+#        else:
+#            tmp = self.AD.replace(LastAuthorEmail,'')
+#            tmp_split = tmp.split('.')
+#            if len(tmp_split) >= 3:
+#                LastAuthorAffi = tmp_split[-3]
+#            else:
+#                LastAuthorAffi = tmp_split[-2]
         return (FirstAuthorAffi, LastAuthorAffi)
     
     def print_to_csv(self, writer, field_names):
         if self.AD == None:
-            (LastAuthorEmail,FirstAuthorAffi,LastAuthorAffi) = [None] * 3
+            LastAuthorEmail = None
         else:
             LastAuthorEmail = self.get_LastAuthorEmail()
-            (FirstAuthorAffi,LastAuthorAffi) = self.get_FirstLastAffi(LastAuthorEmail)
-#           print (LastAuthorEmail,FirstAuthorAffi,LastAuthorAffi)
-        values = [self.TI, self.FAU, FirstAuthorAffi, LastAuthorAffi, LastAuthorEmail, 
-                  self.AB, self.JT, self.DP]
+        (FirstAuthor,LastAuthor, FirstAuthorAffi, LastAuthorAffi) = self.get_FirstLastAuthor()
+        LastAuthorHindex = self.get_LastAuthor_Hindex()
+        Abstract = Get_Abstract(self.PMID, self.MY_API_KEY, self.authtoken)
+#        print (LastAuthorEmail,FirstAuthor,FirstAuthorAffi,LastAuthor,LastAuthorAffi)
+        values = [self.TI, self.FAU, FirstAuthor, FirstAuthorAffi, LastAuthor, LastAuthorAffi, 
+                  LastAuthorEmail, LastAuthorHindex, Abstract, self.JT, self.DP, self.GR]
 #        print (dict(zip(field_names, values)))
         writer.writerow(dict(zip(field_names, values)))
     
@@ -68,7 +107,7 @@ def search_term(keyword):
 def search_journal(journal_name="JAMA[ta]"):
     # if certain key terms needs to be searched in database
     # output article PMID list in "idlist"
-    search_handle = Entrez.esearch(db="pubmed", term = journal_name, mindate='2017/01/01', 
+    search_handle = Entrez.esearch(db="pubmed", term = journal_name, mindate='2017/12/01', 
                                    maxdate='2017/12/31', datetype='pdat', retmax=100000) # default retmax=20
     record = Entrez.read(search_handle)
 #    print (record["Count"]) # number of available results
@@ -84,7 +123,11 @@ def fetch_PMID(idlist):
 
 def main():
     Entrez.email = "jasonwang.info@gmail.com"
-    
+    MY_API_KEY = 'e526b5cb576ab5b4c1841c22e1939479'
+    resp_auth = requests.get("http://api.elsevier.com/authenticate?platform=SCOPUS&choice=40772",
+                        headers={'Accept':'application/json',
+                                 'X-ELS-APIKey': MY_API_KEY})
+    authtoken = resp_auth.json().get("authenticate-response").get("authtoken")
 #    parser = argparse.ArgumentParser(description='Get data of papers from Pubmed database')
 #    parser.add_argument('-i', dest='inputfile', type=str, nargs=1,
 #                    help='output data with given input PMID file')
@@ -109,13 +152,13 @@ def main():
         print ('no results for the keyword search, try another one.')
     else:
         records = fetch_PMID(idlist)
-        field_names = ['Title','Authors','FirstAuthorAffiliation','LastAuthorAffiliation',
-                       'LastAuthorEmail','Abstract','Journal','PublicationDate']
+        field_names = ['Title','Authors','FirstAuthor','FirstAuthorAffiliation','LastAuthor','LastAuthorAffiliation',
+                       'LastAuthorEmail','LastAuthorHindex','Abstract','Journal','PublicationDate','Grant']
         with open('outputs.csv','w',newline='') as outfile:
             writer = csv.DictWriter(outfile, fieldnames=field_names)
             writer.writeheader()
             for record in records:
-                article = Article(record)
+                article = Article(record, MY_API_KEY, authtoken)
     #            print (record)
                 article.print_to_csv(writer, field_names)
     
